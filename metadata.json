@@ -1,0 +1,6 @@
+{
+  "name": "GREEN ENERGY — Hemat Energi untuk Masa Depan",
+  "description": "Website kampanye edukasi Hemat Energi dan Green Technology Focus yang terintegrasi dengan AI Konsultan Green Tech melalui webhook n8n.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
