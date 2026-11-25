@@ -75,6 +75,18 @@ Backend Server → Website Chatbot Widget
 
 ---
 
+## Deployment ke Vercel
+
+Proyek ini sudah dilengkapi `vercel.json` dan Vercel Serverless Functions di folder `/api` (`api/consultation.ts`, `api/health.ts`, `api/catalog.ts`):
+
+1. Hubungkan repositori GitHub ke proyek Vercel (Framework Preset: **Vite**, Build Command: `npm run build`, Output Directory: `dist`).
+2. Buka **Settings → Environment Variables** di dashboard Vercel lalu tambahkan:
+   - `N8N_WEBHOOK_URL` → Production Webhook URL workflow n8n Anda.
+   - (Opsional) `N8N_TIMEOUT_MS` → `25000`.
+3. Lakukan redeploy agar fungsi `/api/consultation` langsung terhubung ke AI Agent n8n Anda.
+
+---
+
 ## Panduan Menghubungkan Workflow n8n (Tanpa Mengganggu Jalur Telegram)
 
 Workflow Telegram yang sudah ada (**Telegram Trigger → AI Agent → Telegram Send a Text Message**) tetap dipertahankan. Untuk menambahkan jalur Website:
