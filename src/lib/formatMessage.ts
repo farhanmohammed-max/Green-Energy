@@ -1,7 +1,13 @@
+export interface OrderedListItem {
+  number: number;
+  text: string;
+  subItems: string[];
+}
+
 export type MessageBlock =
   | { type: 'paragraph'; text: string }
   | { type: 'bullet-list'; items: string[] }
-  | { type: 'ordered-list'; items: string[] };
+  | { type: 'ordered-list'; items: OrderedListItem[] };
 
 export interface TextSegment {
   text: string;
@@ -10,7 +16,7 @@ export interface TextSegment {
 
 /**
  * Splits a plain-text AI reply into readable paragraphs, bullet lists, and numbered lists
- * without using raw HTML rendering.
+ * (preserving nested bullet sub-items under numbered steps) without using raw HTML rendering.
  */
 export function parseMessageBlocks(content: string): MessageBlock[] {
   const normalized = content.replace(/\r\n/g, '\n').trim();
@@ -20,7 +26,7 @@ export function parseMessageBlocks(content: string): MessageBlock[] {
   const blocks: MessageBlock[] = [];
   let paragraphLines: string[] = [];
   let bulletItems: string[] = [];
-  let orderedItems: string[] = [];
+  let orderedItems: OrderedListItem[] = [];
 
   const flushParagraph = () => {
     if (paragraphLines.length > 0) {
@@ -44,28 +50,37 @@ export function parseMessageBlocks(content: string): MessageBlock[] {
   };
 
   for (const rawLine of lines) {
+    const isIndented = /^\s{2,}/.test(rawLine);
     const line = rawLine.trim();
 
     if (!line) {
       flushParagraph();
       flushBullets();
-      flushOrdered();
+      // Keep orderedItems open across single blank lines so "1. ...\n   - ...\n\n2. ..." stays a single list
+      continue;
+    }
+
+    const orderedMatch = line.match(/^(\d+)[.)]\s+(.+)$/);
+    if (orderedMatch) {
+      flushParagraph();
+      flushBullets();
+      orderedItems.push({
+        number: Number(orderedMatch[1]),
+        text: orderedMatch[2].trim(),
+        subItems: [],
+      });
       continue;
     }
 
     const bulletMatch = line.match(/^[-*•]\s+(.+)$/);
     if (bulletMatch) {
       flushParagraph();
-      flushOrdered();
-      bulletItems.push(bulletMatch[1].trim());
-      continue;
-    }
-
-    const orderedMatch = line.match(/^\d+[.)]\s+(.+)$/);
-    if (orderedMatch) {
-      flushParagraph();
-      flushBullets();
-      orderedItems.push(orderedMatch[1].trim());
+      if (orderedItems.length > 0 && isIndented) {
+        orderedItems[orderedItems.length - 1].subItems.push(bulletMatch[1].trim());
+      } else {
+        flushOrdered();
+        bulletItems.push(bulletMatch[1].trim());
+      }
       continue;
     }
 

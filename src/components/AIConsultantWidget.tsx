@@ -97,9 +97,23 @@ function FormattedMessageBody({ content }: { content: string }) {
         }
         if (block.type === 'ordered-list') {
           return (
-            <ol key={index} className="list-decimal pl-5 space-y-1">
+            <ol key={index} className="space-y-2">
               {block.items.map((item, idx) => (
-                <li key={idx}>{renderInline(item)}</li>
+                <li key={idx} className="space-y-1">
+                  <div className="flex items-start gap-2">
+                    <span className="font-semibold text-emerald-800 tabular-nums shrink-0">
+                      {item.number}.
+                    </span>
+                    <span>{renderInline(item.text)}</span>
+                  </div>
+                  {item.subItems.length > 0 && (
+                    <ul className="list-disc pl-8 space-y-1 text-[#3E5248]">
+                      {item.subItems.map((sub, subIdx) => (
+                        <li key={subIdx}>{renderInline(sub)}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
               ))}
             </ol>
           );

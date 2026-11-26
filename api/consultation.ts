@@ -6,6 +6,7 @@ import {
   validateConsultationInput,
   validateWebhookUrl,
 } from '../src/lib/n8n';
+import { getServerWebhookUrl } from './_n8nConfig';
 
 interface VercelRequest extends IncomingMessage {
   body?: unknown;
@@ -97,7 +98,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const webhookCheck = validateWebhookUrl(process.env.N8N_WEBHOOK_URL);
+  const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
   if (!webhookCheck.configured) {
     sendJson(res, 503, {
       ok: false,

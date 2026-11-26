@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateWebhookUrl } from '../src/lib/n8n';
+import { getServerWebhookUrl } from './_n8nConfig';
 
 interface VercelResponse extends ServerResponse {
   status?: (code: number) => VercelResponse;
@@ -14,7 +15,7 @@ export default function handler(req: IncomingMessage, res: VercelResponse) {
     return;
   }
 
-  const webhookCheck = validateWebhookUrl(process.env.N8N_WEBHOOK_URL);
+  const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
   const payload = {
     status: 'ok',
     consultationConfigured: webhookCheck.valid,

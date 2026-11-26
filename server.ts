@@ -11,6 +11,7 @@ import {
   validateWebhookUrl,
 } from './src/lib/n8n.ts';
 import { SOLUTION_CATEGORIES } from './src/data/campaignData.ts';
+import { getServerWebhookUrl } from './api/_n8nConfig.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,7 +58,7 @@ async function createServer() {
 
   // Health & safe configuration readiness check (never exposes N8N_WEBHOOK_URL)
   app.get('/api/health', (_req: Request, res: Response) => {
-    const webhookCheck = validateWebhookUrl(process.env.N8N_WEBHOOK_URL);
+    const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
     res.json({
       status: 'ok',
       consultationConfigured: webhookCheck.valid,
@@ -96,7 +97,7 @@ async function createServer() {
       return;
     }
 
-    const webhookCheck = validateWebhookUrl(process.env.N8N_WEBHOOK_URL);
+    const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
     if (!webhookCheck.configured) {
       res.status(503).json({
         ok: false,
