@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { validateWebhookUrl } from '../src/lib/n8n';
-import { getServerWebhookUrl } from './_n8nConfig';
+
+const DEFAULT_N8N_WEBHOOK_URL =
+  'https://miaw-maiw-miaw.app.n8n.cloud/webhook/konsultan-greentech';
 
 interface VercelResponse extends ServerResponse {
   status?: (code: number) => VercelResponse;
@@ -15,12 +16,21 @@ export default function handler(req: IncomingMessage, res: VercelResponse) {
     return;
   }
 
-  const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
+  const rawUrl = (process.env.N8N_WEBHOOK_URL ?? '').trim() || DEFAULT_N8N_WEBHOOK_URL;
+  let configured = false;
+  try {
+    const parsed = new URL(rawUrl);
+    configured = parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    configured = false;
+  }
+
   const payload = {
     status: 'ok',
-    consultationConfigured: webhookCheck.valid,
+    consultationConfigured: configured,
   };
 
+  res.setHeader('Cache-Control', 'no-store');
   if (typeof res.status === 'function') {
     const nextRes = res.status(200);
     if (typeof nextRes.json === 'function') {

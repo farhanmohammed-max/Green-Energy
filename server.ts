@@ -11,7 +11,13 @@ import {
   validateWebhookUrl,
 } from './src/lib/n8n.ts';
 import { SOLUTION_CATEGORIES } from './src/data/campaignData.ts';
-import { getServerWebhookUrl } from './api/_n8nConfig.ts';
+
+const DEFAULT_N8N_WEBHOOK_URL =
+  'https://miaw-maiw-miaw.app.n8n.cloud/webhook/konsultan-greentech';
+
+function getServerWebhookUrl(): string {
+  return (process.env.N8N_WEBHOOK_URL ?? '').trim() || DEFAULT_N8N_WEBHOOK_URL;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

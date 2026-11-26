@@ -1,12 +1,29 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import {
-  N8N_NOT_CONFIGURED_MESSAGE,
-  extractReplyFromN8nPayload,
-  resolveTimeoutMs,
-  validateConsultationInput,
-  validateWebhookUrl,
-} from '../src/lib/n8n';
-import { getServerWebhookUrl } from './_n8nConfig';
+
+/**
+ * Self-contained Vercel Serverless Function for POST /api/consultation.
+ * Zero relative/cross-directory runtime imports to guarantee compatibility
+ * with Vercel Node.js ESM runtimes ("type": "module").
+ */
+
+const DEFAULT_N8N_WEBHOOK_URL =
+  'https://miaw-maiw-miaw.app.n8n.cloud/webhook/konsultan-greentech';
+const MAX_MESSAGE_LENGTH = 1000;
+const DEFAULT_TIMEOUT_MS = 30000;
+const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{6,128}$/;
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+  '169.254.169.254',
+  'metadata.google.internal',
+]);
+
+const REPLY_KEYS = ['reply', 'output', 'text', 'response', 'message', 'answer', 'content'] as const;
+const CONTAINER_KEYS = ['data', 'result', 'body', 'json'] as const;
 
 interface VercelRequest extends IncomingMessage {
   body?: unknown;
@@ -18,6 +35,7 @@ interface VercelResponse extends ServerResponse {
 }
 
 function sendJson(res: VercelResponse, statusCode: number, payload: unknown) {
+  res.setHeader('Cache-Control', 'no-store');
   if (typeof res.status === 'function') {
     const nextRes = res.status(statusCode);
     if (typeof nextRes.json === 'function') {
@@ -30,11 +48,112 @@ function sendJson(res: VercelResponse, statusCode: number, payload: unknown) {
   res.end(JSON.stringify(payload));
 }
 
-async function readBody(req: VercelRequest): Promise<unknown> {
+function isPrivateOrLinkLocalIPv4(hostname: string): boolean {
+  const parts = hostname.split('.');
+  if (parts.length !== 4 || !parts.every((p) => /^\d+$/.test(p))) {
+    return false;
+  }
+  const [a, b] = parts.map(Number);
+  return (
+    a === 10 ||
+    a === 127 ||
+    a === 0 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  );
+}
+
+function resolveWebhookUrl(): { valid: true; url: string } | { valid: false; reason: string } {
+  const raw = (process.env.N8N_WEBHOOK_URL ?? '').trim() || DEFAULT_N8N_WEBHOOK_URL;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return { valid: false, reason: 'invalid_format' };
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return { valid: false, reason: 'invalid_format' };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  if (BLOCKED_HOSTNAMES.has(host) || isPrivateOrLinkLocalIPv4(host)) {
+    return { valid: false, reason: 'unsafe_host' };
+  }
+
+  return { valid: true, url: parsed.toString() };
+}
+
+function resolveTimeoutMs(): number {
+  const parsed = Number(process.env.N8N_TIMEOUT_MS);
+  if (!Number.isFinite(parsed) || parsed < 5000 || parsed > 55000) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return Math.floor(parsed);
+}
+
+function extractReply(payload: unknown, depth = 0): string | null {
+  if (depth > 4 || payload === null || payload === undefined) return null;
+
+  if (typeof payload === 'string') {
+    const trimmed = payload.trim();
+    if (!trimmed) return null;
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const extracted = extractReply(parsed, depth + 1);
+        if (extracted) return extracted;
+      } catch {
+        // Return as plain text
+      }
+    }
+    return trimmed;
+  }
+
+  if (Array.isArray(payload)) {
+    for (const item of payload) {
+      const found = extractReply(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof payload === 'object') {
+    const obj = payload as Record<string, unknown>;
+    for (const key of REPLY_KEYS) {
+      const val = obj[key];
+      if (typeof val === 'string' && val.trim().length > 0) {
+        return val.trim();
+      }
+    }
+    for (const key of CONTAINER_KEYS) {
+      const nested = obj[key];
+      if (nested && typeof nested === 'object') {
+        const found = extractReply(nested, depth + 1);
+        if (found) return found;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function readJsonBody(req: VercelRequest): Promise<unknown> {
   if (req.body !== undefined) {
     if (typeof req.body === 'string') {
       try {
         return JSON.parse(req.body);
+      } catch {
+        return null;
+      }
+    }
+    if (Buffer.isBuffer(req.body)) {
+      try {
+        return JSON.parse(req.body.toString('utf8'));
       } catch {
         return null;
       }
@@ -63,6 +182,12 @@ async function readBody(req: VercelRequest): Promise<unknown> {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return;
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     sendJson(res, 405, {
@@ -75,7 +200,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let parsedBody: unknown;
   try {
-    parsedBody = await readBody(req);
+    parsedBody = await readJsonBody(req);
   } catch (err) {
     if (err instanceof Error && err.message === 'PAYLOAD_TOO_LARGE') {
       sendJson(res, 413, {
@@ -88,27 +213,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     parsedBody = null;
   }
 
-  const validation = validateConsultationInput(parsedBody);
-  if (!validation.valid) {
+  if (!parsedBody || typeof parsedBody !== 'object') {
     sendJson(res, 400, {
       ok: false,
       code: 'INVALID_INPUT',
-      error: validation.error,
+      error: 'Permintaan tidak valid. Silakan kirim pertanyaan dalam format teks.',
     });
     return;
   }
 
-  const webhookCheck = validateWebhookUrl(getServerWebhookUrl());
-  if (!webhookCheck.configured) {
-    sendJson(res, 503, {
+  const record = parsedBody as Record<string, unknown>;
+  const rawMessage = record.message;
+  const rawSessionId = record.sessionId;
+
+  if (typeof rawMessage !== 'string') {
+    sendJson(res, 400, {
       ok: false,
-      code: 'NOT_CONFIGURED',
-      error: N8N_NOT_CONFIGURED_MESSAGE,
+      code: 'INVALID_INPUT',
+      error: 'Pesan pertanyaan wajib diisi berupa teks.',
     });
     return;
   }
 
-  if (!webhookCheck.valid) {
+  const cleanedMessage = rawMessage.replace(/\0/g, '').replace(/\r\n/g, '\n').trim();
+  if (!cleanedMessage) {
+    sendJson(res, 400, {
+      ok: false,
+      code: 'INVALID_INPUT',
+      error: 'Silakan tulis pertanyaan terlebih dahulu sebelum mengirim.',
+    });
+    return;
+  }
+
+  if (cleanedMessage.length > MAX_MESSAGE_LENGTH) {
+    sendJson(res, 400, {
+      ok: false,
+      code: 'INVALID_INPUT',
+      error: `Pesan terlalu panjang. Batas maksimal adalah ${MAX_MESSAGE_LENGTH} karakter.`,
+    });
+    return;
+  }
+
+  if (typeof rawSessionId !== 'string' || !SESSION_ID_PATTERN.test(rawSessionId.trim())) {
+    sendJson(res, 400, {
+      ok: false,
+      code: 'INVALID_INPUT',
+      error: 'Sesi konsultasi tidak valid. Silakan muat ulang halaman atau mulai sesi baru.',
+    });
+    return;
+  }
+
+  const webhook = resolveWebhookUrl();
+  if (!webhook.valid) {
     sendJson(res, 503, {
       ok: false,
       code: 'INVALID_WEBHOOK_CONFIG',
@@ -118,18 +274,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const timeoutMs = resolveTimeoutMs(process.env.N8N_TIMEOUT_MS);
+  const sessionId = rawSessionId.trim();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), resolveTimeoutMs());
 
   try {
-    const upstreamResponse = await fetch(webhookCheck.url, {
+    const upstreamResponse = await fetch(webhook.url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json, text/plain;q=0.9',
       },
-      body: JSON.stringify(validation.payload),
+      body: JSON.stringify({
+        message: cleanedMessage,
+        sessionId,
+        source: 'website',
+      }),
       signal: controller.signal,
     });
 
@@ -148,7 +308,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? await upstreamResponse.json()
       : await upstreamResponse.text();
 
-    const reply = extractReplyFromN8nPayload(rawData);
+    const reply = extractReply(rawData);
     if (!reply) {
       sendJson(res, 502, {
         ok: false,
@@ -162,7 +322,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     sendJson(res, 200, {
       ok: true,
       reply,
-      sessionId: validation.payload.sessionId,
+      sessionId,
     });
   } catch (error: unknown) {
     const isAbort = error instanceof Error && error.name === 'AbortError';
